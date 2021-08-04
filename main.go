@@ -1,13 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"strconv"
 )
 
 type address struct {
@@ -29,20 +29,15 @@ const gadgetXml =
 var (
 	gadgetXmlTmpl *template.Template
 	serverAddr    address
+
+	serverIP = flag.String("i", "", "The IP address of the server")
+	serverPort = flag.Int64("p", 0, "The port of the server address")
+	ipServiceAddr = flag.String("e", "", "The IP address of external IP Service from where we can get our IP address")
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	log.Println("handle Index")
-	//f, err := os.Open("./gadget.xml")
-	//if err != nil {
-	//	log.Println("error open gadget xml")
-	//	w.WriteHeader(http.StatusInternalServerError)
-	//	fmt.Fprint(w, "error open gadget xml: ", err)
-	//	return
-	//}
-	//w.WriteHeader(http.StatusOK)
-	//_, err = io.Copy(w, f)
 	err := gadgetXmlTmpl.Execute(w, serverAddr)
 	if err != nil {
 		log.Println("error writing gadget xml")
@@ -98,9 +93,20 @@ func getServerIp() (string ,error) {
 
 	for _, addr := range addrs {
 		// 检查 ip 地址判断是否回环地址
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && IsPublicIP(ipnet) {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && IsPublicIP(ipnet.IP) {
 			if ipnet.IP.To4() != nil {
 				return ipnet.IP.String(), nil
+			}
+		}
+	}
+
+	res, err := http.Get("http://" + *ipServiceAddr)
+	if err == nil && res.StatusCode == http.StatusOK {
+		defer res.Body.Close()
+		body, err := ioutil.ReadAll(res.Body)
+		if err == nil {
+			if IsPublicIP(body) {
+				return string(body), nil
 			}
 		}
 	}
@@ -108,8 +114,7 @@ func getServerIp() (string ,error) {
 	return "", fmt.Errorf("can not find the server ip address")
 }
 
-func IsPublicIP(IPNet *net.IPNet) bool {
-	IP := IPNet.IP
+func IsPublicIP(IP net.IP) bool {
 	if IP.IsLoopback() || IP.IsLinkLocalMulticast() || IP.IsLinkLocalUnicast() {
 		return false
 	}
@@ -130,19 +135,16 @@ func IsPublicIP(IPNet *net.IPNet) bool {
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 func main() {
-	if len(os.Args) > 1 {
-		port, err := strconv.ParseInt(os.Args[1], 10, 64)
-		if err != nil {
-			log.Fatal("err get port from arg: ", err)
-		}
-		serverAddr.Port = port
-	}
+	flag.Parse()
 
-	serverIP, err := getServerIp()
-	if err != nil {
-		log.Fatal("error get server IP: ", err)
+	if *serverIP == "" {
+		ip, err := getServerIp()
+		if err != nil {
+			log.Fatal("error get server IP: ", err)
+		}
+		*serverIP = ip
 	}
-	serverAddr.IP = serverIP
+	serverAddr.IP = *serverIP
 
 	http.HandleFunc("/", handleIndex)
 	http.HandleFunc("/addapp", handleAddApp)
@@ -151,8 +153,8 @@ func main() {
 	http.HandleFunc("/removeapp", handleRemoveApp)
 
 	listenAddr := ":0"
-	if serverAddr.Port != 0 {
-		listenAddr = fmt.Sprint(":", serverAddr.Port)
+	if *serverPort != 0 {
+		listenAddr = fmt.Sprint(":", *serverPort)
 	}
 
 	l, err := net.Listen("tcp", listenAddr)
