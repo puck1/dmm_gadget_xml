@@ -3,11 +3,11 @@ package main
 import (
 	"flag"
 	"fmt"
-	"html/template"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"text/template"
 )
 
 type address struct {
